@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "jrQSlk3yQ4/JfCNrgeS6BD06lDFsR0MPHiHV3oMATKP8HrF5xonmz6AFPMUnFVJVHwN2FhMmTf1I8pMgKXMV4g==",
+  "success": true,
+  "projectFilePath": "/home/matt/Development/akka-go/AkkaGo/AkkaGo.fsproj",
+  "expectedPackageFiles": [
+    "/home/matt/.nuget/packages/fsharp.core/5.0.0/fsharp.core.5.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}
