@@ -4,6 +4,7 @@
     <TargetFramework>net5.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Messages.fs" />
     <Compile Include="Actors.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

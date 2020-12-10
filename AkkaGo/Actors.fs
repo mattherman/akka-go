@@ -4,17 +4,16 @@ open System.Text
 open Akka.FSharp
 open Akka.IO
 
-type Command =
-    | UserCommand of string
+open Messages
 
-let dummyCommandActor (mailbox: Actor<'a>) msg  =
+let dummyCommandActor (mailbox: Actor<'a>) msg =
     let sender = mailbox.Sender ()
     match msg with
     | UserCommand cmd -> sender <! cmd
 
 let connectionActor connection (mailbox: Actor<obj>) = 
     let commandActor = spawn mailbox.Context "command" (actorOf2 dummyCommandActor)
-    let rec loop connection = actor {
+    let rec messageLoop connection = actor {
         let! msg = mailbox.Receive()
 
         match msg with
@@ -31,10 +30,10 @@ let connectionActor connection (mailbox: Actor<obj>) =
             connection <! Tcp.Write.Create (ByteString.FromString response)
         | _ -> mailbox.Unhandled()
 
-        return! loop connection
+        return! messageLoop connection
     }
 
-    loop connection
+    messageLoop connection
 
 let serverActor address (mailbox: Actor<obj>) =
     let rec messageLoop() = actor {
