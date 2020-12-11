@@ -10,3 +10,5 @@ type AuthenticationError =
 type AuthenticationResult =
     | AuthenticationSuccess of username: string
     | AuthenticationFailure of AuthenticationError
+
+type NewGame = NewGame of username: string
