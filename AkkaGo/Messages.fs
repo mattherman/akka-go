@@ -2,5 +2,11 @@ module Messages
 
 open System
 
-type Command =
-    | UserCommand of string
+type AuthenticationRequest = AuthenticationRequest of string
+
+type AuthenticationError =
+    | UsernameUnavailable
+
+type AuthenticationResult =
+    | AuthenticationSuccess of username: string
+    | AuthenticationFailure of AuthenticationError
