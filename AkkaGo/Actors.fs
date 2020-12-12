@@ -9,7 +9,7 @@ open Messages
 open UserInterface
 open System
 
-let gameActor id playerUsername (mailbox: Actor<_>) =
+let gameActor id subscribers playerOne (mailbox: Actor<_>) =
     let rec pending () = actor {
         let! msg = mailbox.Receive ()
         mailbox.Unhandled msg
@@ -24,76 +24,112 @@ let gameCoordinatorActor (mailbox: Actor<_>) =
         let sender = mailbox.Sender ()
 
         match msg with
-        | NewGame playerUsername ->
+        | CreateGame user ->
             let id = random.Next(10000, 100000)
             let gameActorName = sprintf "game_%i" id
-            let game = spawn mailbox.Context gameActorName (gameActor id playerUsername)
-            sender <! "Game created" // TODO - success message
+            let game = spawn mailbox.Context gameActorName (gameActor id [sender] user)
+            user <! JoinedGame game
+            sender <! GameCreated id
             return! receive (games.Add (id, game))
+        | _ -> mailbox.Unhandled msg
     }
 
     receive Map.empty
 
-let userActor username (mailbox: Actor<_>) =
-    let rec receive () = actor {
+let userActor (mailbox: Actor<_>) =
+    let rec waiting () = actor {
         let! msg = mailbox.Receive ()
-        mailbox.Unhandled msg
-        return! receive ()
+        mailbox.Unhandled ()
+        return! waiting ()
     }
-    receive ()
+    waiting ()
+    // let rec unauthenticated () =
+    //     actor {
+    //         let! msg = mailbox.Receive ()
+    //         let sender = mailbox.Sender ()
+    //         match msg with
+    //         | Authenticate username ->
+    //             select "/user/userCoordinator" mailbox.Context.System <! Login (username, mailbox.Self)
+    //         | _ ->
+    //             mailbox.Unhandled msg
+    //         return! authenticating sender
+    //     }
+    // and authenticating requestor =
+    //     actor {
+    //         let! msg = mailbox.Receive ()
+    //         match msg with
+    //         | AuthenticationResult result ->
+    //             requestor <! result
+    //             match result with
+    //             | AuthenticationSuccess username ->
+    //                 return! authenticated username
+    //             | AuthenticationFailure error ->
+    //                 return! unauthenticated ()
+    //         | _ -> mailbox.Unhandled msg
+    //     }
+    // and authenticated username =
+    //     actor {
+    //         let! msg = mailbox.Receive ()
+    //         mailbox.Unhandled msg
+    //         return! authenticated username
+    //     }
+    // unauthenticated ()
 
 let userCoordinatorActor (mailbox: Actor<_>) =
-    let rec receive (users: Map<string, IActorRef>) = actor {
+    let rec receive (authenticatedUsers: Map<string, IActorRef>) = actor {
         let! msg = mailbox.Receive ()
         let sender = mailbox.Sender ()
         match msg with
-        | AuthenticationRequest username ->
-            if users |> Map.containsKey username then
+        | Login username ->
+            if authenticatedUsers |> Map.containsKey username then
                 sender <! AuthenticationFailure UsernameUnavailable
-                return! receive users
+                return! receive authenticatedUsers
             else
                 let userActorName = sprintf "user_%s" username
-                let userActor = spawn mailbox.Context userActorName (userActor username)
-                sender <! AuthenticationSuccess username
-                return! receive (users.Add (username, userActor))
+                let user = spawn mailbox.Context userActorName userActor
+                sender <! AuthenticationSuccess (username, user)
+                return! receive (authenticatedUsers.Add (username, user))
+        | Logout username ->
+            return! receive (authenticatedUsers.Remove username)
     }
     
     receive Map.empty
 
-let commandProcessorActor connection (mailbox: Actor<obj>) =
+let commandProcessorActor userInterface (mailbox: Actor<obj>) =
     let rec unauthenticated () =
-        connection <! authenticationPrompt
-        actor {
-            let! msg = mailbox.Receive ()
-            let sender = mailbox.Sender ()
-
-            match box msg with
-            | :? string as username ->
-                select "/user/userCoordinator" mailbox.Context.System <! AuthenticationRequest username
-            | _ -> mailbox.Unhandled msg
-
-            return! authenticating ()
-        }
-    and authenticating () =
+        userInterface <! authenticationPrompt
         actor {
             let! msg = mailbox.Receive ()
 
             match msg with
-            | :? AuthenticationResult as result ->
-                match result with
-                | AuthenticationSuccess username ->
-                    connection <! sprintf "Welcome, %s!\n" username
-                    connection <! helpMenu
-                    return! authenticated username
+            | :? string as username ->
+                select "/user/userCoordinator" mailbox.Context.System <! Login username
+                return! authenticating ()
+            | _ -> mailbox.Unhandled msg
+
+            return! unauthenticated ()
+        }
+    and authenticating () =
+        actor {
+            let! msg = mailbox.Receive ()
+            match msg with
+            | :? AuthenticationResult as authResult ->
+                match authResult with
+                | AuthenticationSuccess (username, user) ->
+                    userInterface <! sprintf "Welcome, %s!\n" username
+                    return! mainMenu (username, user)
                 | AuthenticationFailure error ->
                     match error with
-                    | UsernameUnavailable -> 
-                        connection <! "Username is already in use. Please try again.\n"
+                    | UsernameUnavailable ->
+                        userInterface <! "Username is already in use. Please try again.\n"
                         return! unauthenticated ()
-            | _ ->
-                return! authenticating ()
+            | _ -> mailbox.Unhandled msg
+            
+            return! authenticating ()
         }
-    and authenticated username =
+    and mainMenu (username, user) =
+        userInterface <! helpMenu
+        userInterface <! "> "
         actor {
             let! msg = mailbox.Receive ()
             let (|StartGame|JoinGame|ListGames|Help|) (str:string) =
@@ -104,23 +140,36 @@ let commandProcessorActor connection (mailbox: Actor<obj>) =
                 | _ -> Help
 
             match msg with
-            | :? string as command ->
-                match command with
+            | :? string as input ->
+                match input with
                 | StartGame ->
-                    select "/user/gameCoordinator" mailbox.Context.System <! NewGame username
-                    connection <! "Game started\n"
+                    select "/user/gameCoordinator" mailbox.Context.System <! CreateGame user
                 | _ ->
-                    connection <! helpMenu
-            | _ -> mailbox.Unhandled ()
+                    userInterface <! helpMenu
+            | :? GameCommand as gameCmd ->
+                match gameCmd with
+                | GameCreated id ->
+                    return! game id
+                | _ ->
+                    mailbox.Unhandled msg
+            | _ ->
+                mailbox.Unhandled msg
 
-            return! authenticated username
+            return! mainMenu (username, user)
+        }
+    and game gameId =
+        userInterface <! "> "
+        actor {
+            let! msg = mailbox.Receive ()
+            userInterface <! "OK\n"
+            return! game gameId
         }
 
+    userInterface <! logo
     unauthenticated ()
 
 let connectionActor connection (mailbox: Actor<obj>) = 
     let commandActor = spawn mailbox.Context "command" (commandProcessorActor mailbox.Self)
-    mailbox.Self <! logo
 
     let rec receive connection = actor {
         let! msg = mailbox.Receive ()
